@@ -21,6 +21,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -32,7 +34,6 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define N_SAMPLES 2000
-#define prova 3000
 
 /* USER CODE END PD */
 
@@ -50,7 +51,9 @@ TIM_HandleTypeDef htim2;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-uint16_t voltage_buffer[N_SAMPLES];
+volatile uint16_t voltage_buffer[N_SAMPLES];
+volatile uint8_t measure_requested = 0;
+volatile uint8_t measure_completed = 0;
 
 /* USER CODE END PV */
 
@@ -105,22 +108,6 @@ int main(void)
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 
-  // Wait to ensure the capacitor is fully discharged
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);
-  HAL_Delay(500);
-
-  // NOTE: tim2 has been configured to 10kHz by setting ARR=99 and PSC=83
-
-  // Start DMA ADC conversion, still waiting for the timer trigger
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)voltage_buffer, sizeof(voltage_buffer));
-
-  // Start the timer that triggers the ADC conversion
-  HAL_TIM_Base_Start(&htim2);
-
-  // Send a voltage step to the circuit
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);
-
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -128,6 +115,34 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
+	  if (measure_requested){
+		  // Reset request flag
+		  measure_requested = 0;
+
+		  // Wait to ensure the capacitor is fully discharged
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);
+		  HAL_Delay(500);
+
+		  // NOTE: tim2 has been configured to 10kHz by setting ARR=99 and PSC=83
+
+		  // Start DMA ADC conversion, still waiting for the timer trigger
+		  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)voltage_buffer, N_SAMPLES);
+
+		  // Start the timer that triggers the ADC conversion
+		  HAL_TIM_Base_Start(&htim2);
+
+		  // Send a voltage step to the circuit
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);
+
+	  }
+
+	  if (measure_completed){
+		  // Resed completed flag
+		  measure_completed = 0;
+
+		  sendData();
+
+	  }
 
     /* USER CODE BEGIN 3 */
   }
@@ -360,16 +375,52 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	if(GPIO_Pin == B1_Pin){
+		measure_requested = 1;
+	}
+
+}
+
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
-    // Stop timer and dma when the buffer is full
+    // Stop timer and dma when the acquisition is complete
     HAL_TIM_Base_Stop(&htim2);
     HAL_ADC_Stop_DMA(&hadc1);
+
+    // Send acquired data
+    measure_completed = 1;
+
+}
+
+void sendData(void)
+{
+	char msg[50];
+
+	// Transmit data header
+	sprintf(msg, "Index, ADC_raw\r\n");
+	HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
+
+	for (int i = 0; i < N_SAMPLES; i++){
+		sprintf(msg, "%d,%d\r\n", i, voltage_buffer[i]);
+		HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
+	}
+
+	// Transmit data tail
+	sprintf(msg, "********TRANSMISSION COMPLETED********\r\n");
+	HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
+
 }
 
 /* USER CODE END 4 */
