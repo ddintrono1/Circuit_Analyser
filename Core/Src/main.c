@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -28,12 +29,20 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum {
+    MODE_IDLE,
+    MODE_STEP_RESPONSE,
+    MODE_FREQ_ANALYSIS
+} SystemState_t;
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define N_SAMPLES 2000
+#define DAC_FREQ 10000
+#define SIGNAL_FREQ 5
+#define PERIOD_SAMPLES (DAC_FREQ / SIGNAL_FREQ)
 
 /* USER CODE END PD */
 
@@ -44,16 +53,24 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+ADC_HandleTypeDef hadc2;
 DMA_HandleTypeDef hdma_adc1;
+DMA_HandleTypeDef hdma_adc2;
+
+DAC_HandleTypeDef hdac;
+DMA_HandleTypeDef hdma_dac1;
 
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim8;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-volatile uint16_t voltage_buffer[N_SAMPLES];
-volatile uint8_t measure_requested = 0;
+volatile uint16_t ADC_buffer[N_SAMPLES];
+uint16_t DAC_buffer[PERIOD_SAMPLES];
+
 volatile uint8_t measure_completed = 0;
+SystemState_t current_state = MODE_IDLE;
 
 /* USER CODE END PV */
 
@@ -64,6 +81,9 @@ static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_DAC_Init(void);
+static void MX_ADC2_Init(void);
+static void MX_TIM8_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -106,7 +126,17 @@ int main(void)
   MX_USART2_UART_Init();
   MX_ADC1_Init();
   MX_TIM2_Init();
+  MX_DAC_Init();
+  MX_ADC2_Init();
+  MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
+
+  // NOTE: tim2 has been configured to 10kHz by setting ARR=99 and PSC=83
+
+  // Create sine LookUpTable
+  for (int i = 0; i < PERIOD_SAMPLES; i++){
+	  DAC_buffer[i] = (uint16_t)((4095.0f/2.0f) * (1.0f + sin(2.0f*M_PI*i/PERIOD_SAMPLES)));
+  }
 
   /* USER CODE END 2 */
 
@@ -114,25 +144,46 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
-	  if (measure_requested){
-		  // Reset request flag
-		  measure_requested = 0;
+	  // Check if the frequency analysis button has been pushed (input pulled down)
+	  if (HAL_GPIO_ReadPin(BTN_FREQ_GPIO_Port, BTN_FREQ_Pin) == GPIO_PIN_RESET){
+		  // Wait some time to avoid bouncing capture
+		  HAL_Delay(50);
 
-		  // Wait to ensure the capacitor is fully discharged
-		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);
-		  HAL_Delay(500);
+		  // Check if the button is still pushed after the bouncing
+		  if (HAL_GPIO_ReadPin(BTN_FREQ_GPIO_Port, BTN_FREQ_Pin) == GPIO_PIN_RESET){
+			  current_state = MODE_FREQ_ANALYSIS;
+		  }
 
-		  // NOTE: tim2 has been configured to 10kHz by setting ARR=99 and PSC=83
+		  // Wait until the button is released
+		  while(HAL_GPIO_ReadPin(BTN_FREQ_GPIO_Port, BTN_FREQ_Pin) == GPIO_PIN_RESET);
+	  }
 
-		  // Start DMA ADC conversion, still waiting for the timer trigger
-		  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)voltage_buffer, N_SAMPLES);
+	  if (HAL_GPIO_ReadPin(BTN_STEP_GPIO_Port, BTN_STEP_Pin) == GPIO_PIN_RESET){
+		  // Wait some time to avoid bouncing capture
+		  HAL_Delay(50);
 
-		  // Start the timer that triggers the ADC conversion
-		  HAL_TIM_Base_Start(&htim2);
+		  // Check if the button is still pushed after the bouncing
+		  if (HAL_GPIO_ReadPin(BTN_STEP_GPIO_Port, BTN_STEP_Pin) == GPIO_PIN_RESET){
+			  current_state = MODE_STEP_RESPONSE;
+		  }
 
-		  // Send a voltage step to the circuit
-		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);
+		  // Wait until the button is released
+		  while(HAL_GPIO_ReadPin(BTN_FREQ_GPIO_Port, BTN_FREQ_Pin) == GPIO_PIN_RESET);
+	  }
+
+
+	  if (current_state == MODE_STEP_RESPONSE){
+		  // Reset system state
+		  current_state = MODE_IDLE;
+
+		  // Start step response routine
+		  stepResponse();
+	  }
+
+	  if (current_state == MODE_FREQ_ANALYSIS){
+		  // Reset system state
+		  current_state = MODE_IDLE;
+		  freqAnalysis();
 
 	  }
 
@@ -143,6 +194,8 @@ int main(void)
 		  sendData();
 
 	  }
+
+    /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
@@ -249,6 +302,98 @@ static void MX_ADC1_Init(void)
 }
 
 /**
+  * @brief ADC2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC2_Init(void)
+{
+
+  /* USER CODE BEGIN ADC2_Init 0 */
+
+  /* USER CODE END ADC2_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC2_Init 1 */
+
+  /* USER CODE END ADC2_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc2.Instance = ADC2;
+  hadc2.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc2.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc2.Init.ScanConvMode = DISABLE;
+  hadc2.Init.ContinuousConvMode = DISABLE;
+  hadc2.Init.DiscontinuousConvMode = DISABLE;
+  hadc2.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc2.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T8_TRGO;
+  hadc2.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc2.Init.NbrOfConversion = 1;
+  hadc2.Init.DMAContinuousRequests = ENABLE;
+  hadc2.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_144CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC2_Init 2 */
+
+  /* USER CODE END ADC2_Init 2 */
+
+}
+
+/**
+  * @brief DAC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_DAC_Init(void)
+{
+
+  /* USER CODE BEGIN DAC_Init 0 */
+
+  /* USER CODE END DAC_Init 0 */
+
+  DAC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN DAC_Init 1 */
+
+  /* USER CODE END DAC_Init 1 */
+
+  /** DAC Initialization
+  */
+  hdac.Instance = DAC;
+  if (HAL_DAC_Init(&hdac) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** DAC channel OUT1 config
+  */
+  sConfig.DAC_Trigger = DAC_TRIGGER_T8_TRGO;
+  sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+  if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN DAC_Init 2 */
+
+  /* USER CODE END DAC_Init 2 */
+
+}
+
+/**
   * @brief TIM2 Initialization Function
   * @param None
   * @retval None
@@ -294,6 +439,52 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * @brief TIM8 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM8_Init(void)
+{
+
+  /* USER CODE BEGIN TIM8_Init 0 */
+
+  /* USER CODE END TIM8_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM8_Init 1 */
+
+  /* USER CODE END TIM8_Init 1 */
+  htim8.Instance = TIM8;
+  htim8.Init.Prescaler = 83;
+  htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim8.Init.Period = 99;
+  htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim8.Init.RepetitionCounter = 0;
+  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim8, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM8_Init 2 */
+
+  /* USER CODE END TIM8_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -334,11 +525,18 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA2_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA1_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
   /* DMA2_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 3, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+  /* DMA2_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
 }
 
@@ -375,6 +573,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : BTN_FREQ_Pin BTN_STEP_Pin */
+  GPIO_InitStruct.Pin = BTN_FREQ_Pin|BTN_STEP_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
@@ -384,14 +588,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
-	if(GPIO_Pin == B1_Pin){
-		measure_requested = 1;
-	}
-
-}
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
@@ -404,6 +600,25 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 
 }
 
+void stepResponse(void){
+	// Wait to ensure the capacitor is fully discharged
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);
+	HAL_Delay(500);
+
+	// Start DMA ADC conversion, still waiting for the timer trigger
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_buffer, N_SAMPLES);
+
+	// Start the timer that triggers the ADC conversion
+	HAL_TIM_Base_Start(&htim2);
+
+	// Send a voltage step to the circuit
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);
+}
+
+void freqAnalysis(void){
+	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+}
+
 void sendData(void)
 {
 	char msg[50];
@@ -413,7 +628,7 @@ void sendData(void)
 	HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
 
 	for (int i = 0; i < N_SAMPLES; i++){
-		sprintf(msg, "%d,%d\r\n", i, voltage_buffer[i]);
+		sprintf(msg, "%d,%d\r\n", i, ADC_buffer[i]);
 		HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
 	}
 

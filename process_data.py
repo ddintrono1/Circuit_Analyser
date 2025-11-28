@@ -37,7 +37,7 @@ time = data_table['Time'][int(N_SAMPLES*0.1):int(N_SAMPLES*0.75)]
 m, q = np.polyfit(time, volt_log,  1)
 fitted_volt_log = m*time + q
 
-# Plot 
+# Plot results
 plt.plot(time, volt_log, 'b-o', alpha=0.5, label='Linearized circuit voltage')
 plt.plot(time, fitted_volt_log, color='red', label='Regression')
 plt.xlabel('Time[s]')
