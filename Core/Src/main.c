@@ -72,6 +72,8 @@ uint16_t DAC_buffer[LUT_SAMPLES];
 
 SystemState_t current_state = MODE_IDLE;
 
+uint8_t rx_data[1];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -137,6 +139,9 @@ int main(void)
   for (int i = 0; i < LUT_SAMPLES; i++){
 	  DAC_buffer[i] = (uint16_t)((4095.0f/2.0f) * (1.0f + sin(2.0f*M_PI*i/LUT_SAMPLES)));
   }
+
+  // Trigger connection with the user
+  HAL_UART_Receive_IT(&huart2, rx_data, 1);
 
   /* USER CODE END 2 */
 
@@ -620,6 +625,21 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 		// Set measure complete state
 		current_state = MODE_MEASURE_COMPLETE_FREQ;
 
+	}
+
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if(huart->Instance == USART2){
+		// Set the system state depending on the received command
+		if (*rx_data == 'S' && current_state == MODE_IDLE){
+			current_state = MODE_STEP_RESPONSE;
+		}
+		if (*rx_data == 'F' && current_state == MODE_IDLE){
+			current_state= MODE_FREQ_ANALYSIS;
+		}
+		HAL_UART_Receive_IT(&huart2, rx_data, 1);
 	}
 
 }
