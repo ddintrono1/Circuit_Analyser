@@ -4,7 +4,7 @@ import csv
 
 SERIAL_PORT = 'COM3'
 BAUD_RATE = 115200
-FILE_NAME = 'adc_data.csv'
+FILE_NAME = 'adc_freq_data.csv'
 
 print(f"Waiting for data stream on {SERIAL_PORT}...")
 

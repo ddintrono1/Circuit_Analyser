@@ -56,7 +56,7 @@ Cx = tau * (1/Rx + 1/RES_REF)
 
 print(f'The circuit resistance is: {Rx} Ohm')
 print(f'The circuit capacity is: {Cx} Farad')
-
+print(f'The circuit time constant is: {tau} s')
 
 
 

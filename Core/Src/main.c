@@ -32,17 +32,17 @@
 typedef enum {
     MODE_IDLE,
     MODE_STEP_RESPONSE,
-    MODE_FREQ_ANALYSIS
+    MODE_FREQ_ANALYSIS,
+	MODE_MEASURE_COMPLETE_STEP,
+	MODE_MEASURE_COMPLETE_FREQ
 } SystemState_t;
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define N_SAMPLES 2000
-#define DAC_FREQ 10000
-#define SIGNAL_FREQ 5
-#define PERIOD_SAMPLES (DAC_FREQ / SIGNAL_FREQ)
+#define STEP_SAMPLES 2000
+#define LUT_SAMPLES 1000
 
 /* USER CODE END PD */
 
@@ -66,10 +66,10 @@ TIM_HandleTypeDef htim8;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-volatile uint16_t ADC_buffer[N_SAMPLES];
-uint16_t DAC_buffer[PERIOD_SAMPLES];
+volatile uint16_t ADC_step_buffer[STEP_SAMPLES];
+volatile uint16_t ADC_freq_buffer[LUT_SAMPLES*5];
+uint16_t DAC_buffer[LUT_SAMPLES];
 
-volatile uint8_t measure_completed = 0;
 SystemState_t current_state = MODE_IDLE;
 
 /* USER CODE END PV */
@@ -133,9 +133,9 @@ int main(void)
 
   // NOTE: tim2 has been configured to 10kHz by setting ARR=99 and PSC=83
 
-  // Create sine LookUpTable
-  for (int i = 0; i < PERIOD_SAMPLES; i++){
-	  DAC_buffer[i] = (uint16_t)((4095.0f/2.0f) * (1.0f + sin(2.0f*M_PI*i/PERIOD_SAMPLES)));
+  // Create sine LookUpTable, this table will contain samples from only one sine period
+  for (int i = 0; i < LUT_SAMPLES; i++){
+	  DAC_buffer[i] = (uint16_t)((4095.0f/2.0f) * (1.0f + sin(2.0f*M_PI*i/LUT_SAMPLES)));
   }
 
   /* USER CODE END 2 */
@@ -173,25 +173,35 @@ int main(void)
 
 
 	  if (current_state == MODE_STEP_RESPONSE){
-		  // Reset system state
-		  current_state = MODE_IDLE;
-
 		  // Start step response routine
 		  stepResponse();
+
+		  // Reset system state
+		  current_state = MODE_IDLE;
 	  }
 
 	  if (current_state == MODE_FREQ_ANALYSIS){
+		  // Start frequency analysis routine
+		  freqAnalysis();
+
 		  // Reset system state
 		  current_state = MODE_IDLE;
-		  freqAnalysis();
 
 	  }
 
-	  if (measure_completed){
-		  // Resed completed flag
-		  measure_completed = 0;
+	  if (current_state == MODE_MEASURE_COMPLETE_STEP || current_state == MODE_MEASURE_COMPLETE_FREQ){
 
-		  sendData();
+		  // Pass the appropriate buffer and header string depending on the performed measurement
+		  if (current_state == MODE_MEASURE_COMPLETE_STEP){
+			  sendData(ADC_step_buffer, STEP_SAMPLES, "MODE: STEP");
+		  }
+
+		  if (current_state == MODE_MEASURE_COMPLETE_FREQ){
+			  sendData(ADC_freq_buffer, (LUT_SAMPLES*5), "MODE: FREQ");
+		  }
+
+		  // Reset completed flag
+		  current_state = MODE_IDLE;
 
 	  }
 
@@ -457,9 +467,9 @@ static void MX_TIM8_Init(void)
 
   /* USER CODE END TIM8_Init 1 */
   htim8.Instance = TIM8;
-  htim8.Init.Prescaler = 83;
+  htim8.Init.Prescaler = 0;
   htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim8.Init.Period = 99;
+  htim8.Init.Period = 8399;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
   htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -558,7 +568,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LD2_Pin|GPIO_PIN_15, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LD2_Pin|STEP_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
@@ -566,8 +576,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LD2_Pin PA15 */
-  GPIO_InitStruct.Pin = LD2_Pin|GPIO_PIN_15;
+  /*Configure GPIO pins : LD2_Pin STEP_Pin */
+  GPIO_InitStruct.Pin = LD2_Pin|STEP_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -591,22 +601,43 @@ static void MX_GPIO_Init(void)
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
-    // Stop timer and dma when the acquisition is complete
-    HAL_TIM_Base_Stop(&htim2);
-    HAL_ADC_Stop_DMA(&hadc1);
+	if (hadc->Instance == ADC1){
+		// Stop timer and dma when the acquisition is complete
+		HAL_TIM_Base_Stop(&htim2);
+		HAL_ADC_Stop_DMA(&hadc1);
 
-    // Send acquired data
-    measure_completed = 1;
+		// Set measure complete state
+		current_state = MODE_MEASURE_COMPLETE_STEP;
+
+	}
+
+	if (hadc->Instance == ADC2){
+		// Stop timer and dma when the acquisition is complete
+		HAL_TIM_Base_Stop(&htim8);
+		HAL_ADC_Stop_DMA(&hadc2);
+		HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
+
+		// Set measure complete state
+		current_state = MODE_MEASURE_COMPLETE_FREQ;
+
+	}
 
 }
 
 void stepResponse(void){
+	// Configure the DAC pin to analog input to avoid short circuits
+	setPinMode(DAC_GPIO_Port, DAC_Pin, GPIO_MODE_INPUT);
+
+	// Configure the step pin to digital output in order to produce the step signal
+	setPinMode(STEP_GPIO_Port, STEP_Pin, GPIO_MODE_OUTPUT_PP);
+
+
 	// Wait to ensure the capacitor is fully discharged
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);
 	HAL_Delay(500);
 
 	// Start DMA ADC conversion, still waiting for the timer trigger
-	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_buffer, N_SAMPLES);
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_step_buffer, STEP_SAMPLES);
 
 	// Start the timer that triggers the ADC conversion
 	HAL_TIM_Base_Start(&htim2);
@@ -616,19 +647,37 @@ void stepResponse(void){
 }
 
 void freqAnalysis(void){
-	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+	// Configure the step pin to analog input to avoid short circuits
+	setPinMode(STEP_GPIO_Port, STEP_Pin, GPIO_MODE_INPUT);
+
+	// Configure the DAC pin to analog output in order to produce the sine signal
+	setPinMode(DAC_GPIO_Port, DAC_Pin, GPIO_MODE_ANALOG);
+
+	// Start DMA DAC, still waiting for the timer trigger
+	HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*) DAC_buffer, LUT_SAMPLES, DAC_ALIGN_12B_R);
+
+	// Start DMA ADC conversion, still waiting for the timer trigger
+	HAL_ADC_Start_DMA(&hadc2, ADC_freq_buffer, 5*LUT_SAMPLES);
+
+	// Start the timer that triggers the ADC and DAC
+	HAL_TIM_Base_Start(&htim8);
+
 }
 
-void sendData(void)
-{
+void sendData(volatile uint16_t* buffer, uint32_t buffer_length, char* mode_header){
+
 	char msg[50];
+
+	// Transmit mode header
+	sprintf(msg, "%s\r\n", mode_header);
+	HAL_UART_Transmit(&huart2, msg, strlen(msg), 100);
 
 	// Transmit data header
 	sprintf(msg, "Index, ADC_raw\r\n");
 	HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
 
-	for (int i = 0; i < N_SAMPLES; i++){
-		sprintf(msg, "%d,%d\r\n", i, ADC_buffer[i]);
+	for (int i = 0; i < buffer_length; i++){
+		sprintf(msg, "%d,%d\r\n", i, buffer[i]);
 		HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
 	}
 
@@ -636,6 +685,19 @@ void sendData(void)
 	sprintf(msg, "********TRANSMISSION COMPLETED********\r\n");
 	HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
 
+}
+
+/* Wrapper function used to switch pins configuration mode */
+void setPinMode(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin, uint32_t Mode)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    GPIO_InitStruct.Pin = GPIO_Pin;
+    GPIO_InitStruct.Mode = Mode;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+    HAL_GPIO_Init(GPIOx, &GPIO_InitStruct);
 }
 
 /* USER CODE END 4 */
