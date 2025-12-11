@@ -32,8 +32,10 @@
 /* USER CODE BEGIN PTD */
 typedef enum {
     MODE_IDLE,
-    MODE_STEP_RESPONSE,
-    MODE_FREQ_ANALYSIS
+    MODE_STEP_LAUNCH,
+    MODE_FREQ_LAUNCH,
+	MODE_STEP_RUNNING,
+	MODE_FREQ_RUNNING
 } SystemState_t;
 
 /* USER CODE END PTD */
@@ -91,7 +93,7 @@ uint8_t rx_byte;              	// current byte
 char rx_buffer[RX_BUFFER_SIZE]; // complete command buffer
 uint8_t rx_index = 0;			// current byte index
 
-// UART data transmission variables
+// UART data transmission header
 const uint8_t header_seq[2] = {BIN_HEADER_1, BIN_HEADER_2};
 
 /* USER CODE END PV */
@@ -167,23 +169,11 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  // Start step response routine
+	  if (current_state == MODE_STEP_LAUNCH)stepResponse();
 
-	  if (current_state == MODE_STEP_RESPONSE){
-		  // Start step response routine
-		  stepResponse();
-
-		  // Reset system state
-		  current_state = MODE_IDLE;
-	  }
-
-	  if (current_state == MODE_FREQ_ANALYSIS){
-		  // Start frequency analysis routine
-		  freqAnalysis();
-
-		  // Reset system state (background activity)
-		  current_state = MODE_IDLE;
-
-	  }
+	  // Start frequency analysis routine
+	  if (current_state == MODE_FREQ_LAUNCH)freqAnalysis();
 
     /* USER CODE END WHILE */
 
@@ -519,16 +509,16 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Stream5_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 3, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
   /* DMA1_Stream6_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
   /* DMA2_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 3, 0);
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 2, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
   /* DMA2_Stream2_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 2, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
 }
@@ -566,53 +556,66 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
-
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
 
+/*
+ * The ADC conversion complete callback is called when the whole ADC buffer has
+ * been filled with conversions.
+ * For the step response, which is a one shot event, the code in this callback
+ * reasonably stops the conversion and sends the whole buffer to the PC.
+ * For the frequency response, this callback handles the 'PONG' part of the buffer
+ * transmission, sending the second half of the ADC conversion buffer, without
+ * interrupting the conversion, as we want to continuously measure voltage.
+*/
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
-    // Handles STEP, collected on ADC1 and
+	if (current_state == MODE_IDLE) return;
+
+    // Handles STEP, measured on ADC1
     if (hadc->Instance == ADC1)
     {
-        // Ferma tutto (One-Shot)
+        // Stop conversion (One-Shot)
         HAL_TIM_Base_Stop(&htim2);
         HAL_ADC_Stop_DMA(&hadc1);
 
-        // Invia tutto il buffer in un colpo solo
-        sendRawData(&ADC_buffer[0], STEP_SAMPLES, BIN_MODE_STEP);
+        // Send the measurements
+        sendData(&ADC_buffer[0], STEP_SAMPLES, BIN_MODE_STEP);
 
-        current_state = MODE_IDLE; // Torna a riposo
+        // Reset system state
+        current_state = MODE_IDLE;
     }
 
-    // Gestione FREQ CONTINUA (ADC2) - Metà PONG (Seconda metà)
-    // Scatta quando ha finito di riempire da 1000 a 1999
+    // Handles frequency response, measured on ADC2
     if (hadc->Instance == ADC2)
     {
-        // Spediamo la seconda metà (PONG) mentre lui ricomincia da zero
-        sendRawData(&ADC_buffer[TOTAL_BUFFER_SIZE/2], TOTAL_BUFFER_SIZE/2, BIN_MODE_FREQ);
+        // Send only the second part of the buffer, without stopping the conversion
+        sendData(&ADC_buffer[TOTAL_BUFFER_SIZE/2], TOTAL_BUFFER_SIZE/2, BIN_MODE_FREQ);
     }
 }
 
-// Callback per FREQ CONTINUA (Circular Mode) - Metà PING (Prima metà)
-// Scatta quando ha finito di riempire da 0 a 999
+/*
+ * This callback handles the 'PING' part of the buffer transmission, sending the
+ * first half of the ADC conversion buffer, without  interrupting the conversion,
+ * as we want to continuously measure voltage.
+ */
 void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* hadc)
 {
     if (hadc->Instance == ADC2)
     {
-        // Spediamo la prima metà (PING) mentre lui scrive la seconda
-        // Puntatore: &adc_buffer[0]
-        sendRawData(&ADC_buffer[0], TOTAL_BUFFER_SIZE/2, BIN_MODE_FREQ);
+    	// Send only the first part of the buffer, without stopping the conversion
+        sendData(&ADC_buffer[0], TOTAL_BUFFER_SIZE/2, BIN_MODE_FREQ);
     }
 }
 
-
+/*
+ * This callback handles the command reception. Every received byte is stored in an array,
+ * when a line terminator is received, the whole command, stored in the array is parsed and
+ * the system state is updated accordingly
+ */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 	if(huart->Instance == USART2){
@@ -623,15 +626,29 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 			rx_buffer[rx_index] = '\0';
 
 			if (rx_buffer[0] == 'S'){
-				current_state = MODE_STEP_RESPONSE;
+				current_state = MODE_STEP_LAUNCH;
 			}
 
 			if (rx_buffer[0] == 'F'){
 				int freq_val = atoi(&rx_buffer[1]);
 				changeSineFreq(freq_val);
-				current_state = MODE_FREQ_ANALYSIS;
+				current_state = MODE_FREQ_LAUNCH;
 			}
 
+			if (rx_buffer[0] == 'A'){
+				// Reset system state
+				current_state = MODE_IDLE;
+
+				// Stop everything
+				HAL_TIM_Base_Stop(&htim2);
+				HAL_TIM_Base_Stop(&htim8);
+				HAL_ADC_Stop_DMA(&hadc1);
+				setPinMode(STEP_GPIO_Port, STEP_Pin, GPIO_MODE_INPUT);
+				HAL_ADC_Stop_DMA(&hadc2);
+				HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
+				setPinMode(DAC_GPIO_Port, DAC_Pin, GPIO_MODE_INPUT);
+
+			}
 			rx_index = 0;
 		}
 		else{
@@ -645,13 +662,16 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	}
 }
 
-void stepResponse(void){
+void stepResponse(void)
+{
+	// Update state
+	current_state = MODE_STEP_RUNNING;
+
 	// Configure the DAC pin to analog input to avoid short circuits
 	setPinMode(DAC_GPIO_Port, DAC_Pin, GPIO_MODE_INPUT);
 
 	// Configure the step pin to digital output in order to produce the step signal
 	setPinMode(STEP_GPIO_Port, STEP_Pin, GPIO_MODE_OUTPUT_PP);
-
 
 	// Wait to ensure the capacitor is fully discharged
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);
@@ -667,7 +687,11 @@ void stepResponse(void){
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);
 }
 
-void freqAnalysis(void){
+void freqAnalysis(void)
+{
+	// Update state
+	current_state = MODE_FREQ_RUNNING;
+
 	// Configure the step pin to analog input to avoid short circuits
 	setPinMode(STEP_GPIO_Port, STEP_Pin, GPIO_MODE_INPUT);
 
@@ -682,15 +706,14 @@ void freqAnalysis(void){
 
 	// Start the timer that triggers the ADC and DAC
 	HAL_TIM_Base_Start(&htim8);
-
 }
 
-void sendRawData(volatile uint16_t* buffer, uint16_t buffer_length, uint8_t mode)
+void sendData(volatile uint16_t* buffer, uint16_t buffer_length, uint8_t mode)
 {
-    // Check if the UART is still busy
+    // Check if the UART is idle, otherwise skip
     if (huart2.gState != HAL_UART_STATE_READY) return;
 
-    // 2. Send chunk header + mode header
+    // Send chunk header + mode header
     HAL_UART_Transmit(&huart2, (uint8_t*)header_seq, 2, 1);
     HAL_UART_Transmit(&huart2, &mode, 1, 1);
 
@@ -714,7 +737,7 @@ void setPinMode(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin, uint32_t Mode)
 void changeSineFreq(uint16_t sine_freq)
 {
 	// Avoid too high, null or negative frequencies
-	if (sine_freq <= 200 && sine_freq > 2){
+	if (sine_freq > 2 && sine_freq <= 200){
 
 		uint16_t new_ARR = (uint16_t) ((TIMER_FREQ / ((uint32_t)sine_freq*LUT_SAMPLES)) - 1);
 		__HAL_TIM_SET_AUTORELOAD(&htim8, new_ARR);

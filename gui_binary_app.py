@@ -77,7 +77,7 @@ class RealTimeScope:
         freq_box = ttk.Frame(control_frame)
         freq_box.pack(fill=tk.X, pady=5)
         self.freq_entry = ttk.Entry(freq_box, width=8)
-        self.freq_entry.insert(0, "50")
+        self.freq_entry.insert(0, "2")
         self.freq_entry.pack(side=tk.LEFT, padx=5)
         ttk.Label(freq_box, text="Hz").pack(side=tk.LEFT)
 
@@ -165,9 +165,12 @@ class RealTimeScope:
                 messagebox.showerror("Errore", "Frequenza non valida")
                 
     def send_stop(self):
-         self.current_mode = "IDLE"
-         self.lbl_status.config(text="Stop Visualizzazione", foreground="orange")
-
+        if self.ser and self.ser.is_open:
+            self.current_mode = "IDLE"
+            self.data_buffer.clear()
+            self.ser.write(b'A\n')
+            self.lbl_status.config(text="System stopped", foreground="orange")
+            
     # --- THREAD DI RICEZIONE ---
     def serial_listener(self):
         while not self.stop_thread and self.ser and self.ser.is_open:
