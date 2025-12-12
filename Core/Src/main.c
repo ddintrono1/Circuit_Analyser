@@ -53,7 +53,7 @@ typedef enum {
 #define BIN_MODE_FREQ 0x02
 
 // Board timers frequency
-#define TIMER_FREQ 84000000
+#define MCU_TIMER_CLOCK_FREQ 84000000
 
 // Transmission variables (ping-pong buffer)
 #define CHUNK_SIZE (2*LUT_SAMPLES)
@@ -739,7 +739,7 @@ void changeSineFreq(uint16_t sine_freq)
 	// Avoid too high, null or negative frequencies
 	if (sine_freq > 2 && sine_freq <= 200){
 
-		uint16_t new_ARR = (uint16_t) ((TIMER_FREQ / ((uint32_t)sine_freq*LUT_SAMPLES)) - 1);
+		uint16_t new_ARR = (uint16_t) ((MCU_TIMER_CLOCK_FREQ / ((uint32_t)sine_freq*LUT_SAMPLES)) - 1);
 		__HAL_TIM_SET_AUTORELOAD(&htim8, new_ARR);
 		htim8.Instance->EGR = TIM_EGR_UG;
 	}
