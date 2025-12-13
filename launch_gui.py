@@ -41,8 +41,6 @@ class RealTimeScope:
         # Circular buffer initialization
         self.max_points = 10000
         self.data_buffer = collections.deque([0]*self.max_points, maxlen=self.max_points)
-        
-        self.current_mode = "IDLE"
 
         # Record variables
         self.is_recording = False
@@ -50,7 +48,7 @@ class RealTimeScope:
         self.record_cnt = 0
         self.sample_idx = 0
         self.sample_time = 0
-        self.time = 0
+        self.record_time = 0
 
         self._setup_ui()
         
@@ -82,18 +80,41 @@ class RealTimeScope:
 
         ttk.Separator(control_frame, orient='horizontal').pack(fill='x', pady=10)
 
-        # Frequency analysis panel
-        ttk.Label(control_frame, text="Frequency response (Streaming):").pack(anchor=tk.W)
-        freq_box = ttk.Frame(control_frame)
-        freq_box.pack(fill=tk.X, pady=5)
-        self.freq_entry = ttk.Entry(freq_box, width=8)
-        self.freq_entry.insert(0, "2")
-        self.freq_entry.pack(side=tk.LEFT, padx=5)
-        ttk.Label(freq_box, text="Hz").pack(side=tk.LEFT)
-        self.btn_freq = ttk.Button(control_frame, text="Start/Update", command=self.send_freq, state=tk.DISABLED)
-        self.btn_freq.pack(pady=5, fill=tk.X)
-        self.btn_stop = ttk.Button(control_frame, text="STOP", command=self.send_stop, state=tk.DISABLED)
-        self.btn_stop.pack(pady=5, fill=tk.X)
+        # Sine analysis panel
+        ttk.Label(control_frame, text="Armonic response (Streaming):").pack(anchor=tk.W)
+
+        sine_box = ttk.Frame(control_frame)
+        sine_box.pack(fill=tk.X, pady=5)
+
+        self.sine_entry = ttk.Entry(sine_box, width=8)
+        self.sine_entry.insert(0, "3")
+        self.sine_entry.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(sine_box, text="Hz").pack(side=tk.LEFT)
+
+        self.btn_sine = ttk.Button(control_frame, text="Start/Update", command=self.send_sine, state=tk.DISABLED)
+        self.btn_sine.pack(pady=5, fill=tk.X)
+        self.btn_stop_sine = ttk.Button(control_frame, text="STOP", command=self.send_stop, state=tk.DISABLED)
+        self.btn_stop_sine.pack(pady=5, fill=tk.X)
+
+        ttk.Separator(control_frame, orient='horizontal').pack(fill='x', pady=10)
+
+        # Sawtooth analysis panel
+        ttk.Label(control_frame, text="Sawtooth response (Streaming):").pack(anchor=tk.W)
+
+        sawtooth_box = ttk.Frame(control_frame)
+        sawtooth_box.pack(fill=tk.X, pady=5)
+
+        self.sawtooth_entry = ttk.Entry(sawtooth_box, width=8)
+        self.sawtooth_entry.insert(0, "3")
+        self.sawtooth_entry.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(sawtooth_box, text="Hz").pack(side=tk.LEFT)
+
+        self.btn_sawtooth = ttk.Button(control_frame, text="Start/Update", command=self.send_sawtooth, state=tk.DISABLED)
+        self.btn_sawtooth.pack(pady=5, fill=tk.X)
+        self.btn_stop_sawtooth = ttk.Button(control_frame, text="STOP", command=self.send_stop, state=tk.DISABLED)
+        self.btn_stop_sawtooth.pack(pady=5, fill=tk.X)
 
         ttk.Separator(control_frame, orient='horizontal').pack(fill='x', pady=10)
 
@@ -146,8 +167,8 @@ class RealTimeScope:
 
                 # Enable control buttons
                 self.btn_step.config(state=tk.NORMAL)
-                self.btn_freq.config(state=tk.NORMAL)
-                self.btn_stop.config(state=tk.NORMAL)
+                self.btn_sine.config(state=tk.NORMAL)
+                self.btn_sawtooth.config(state=tk.NORMAL)
                 self.btn_record.config(state=tk.NORMAL)
             except Exception as e:
                 messagebox.showerror("Error", str(e))
@@ -163,31 +184,35 @@ class RealTimeScope:
 
             # Disable control buttons
             self.btn_step.config(state=tk.DISABLED)
-            self.btn_freq.config(state=tk.DISABLED)
-            self.btn_stop.config(state=tk.DISABLED)
+            self.btn_sine.config(state=tk.DISABLED)
+            self.btn_sawtooth.config(state=tk.DISABLED)
+            self.btn_stop_sine.config(state=tk.DISABLED)
+            self.btn_stop_sawtooth.config(state=tk.DISABLED)
             self.btn_record.config(state=tk.DISABLED)
         
 
     # --- STEP RESPONSE BUTTON CALLBACK --- 
     def send_step(self):
         if self.ser and self.ser.is_open:
-            self.current_mode = "STEP"
             self.data_buffer.clear()
 
             self.sample_time = 0.0001
             self.ser.write(b'S\n')
             self.lbl_status.config(text="Step response", foreground="blue")
 
-    # --- FREQUENCY ANLYSIS BUTTON CALLBACK ---
-    def send_freq(self):
+    # --- ARMONIC ANLYSIS BUTTON CALLBACK ---
+    def send_sine(self):
         if self.ser and self.ser.is_open:
             try:
-                freq = int(self.freq_entry.get())
+                freq = int(self.sine_entry.get())
 
-                # Disable step button to avoid conflict
+                # Enable stop button
+                self.btn_stop_sine.config(state=tk.NORMAL)
+
+                # Disable step and sawtooth button to avoid conflict
                 self.btn_step.config(state=tk.DISABLED)  
+                self.btn_sawtooth.config(state=tk.DISABLED)
 
-                self.current_mode = "FREQ"
                 self.data_buffer.clear()
 
                 # Compute ADC sample time (useful for data log)
@@ -195,20 +220,49 @@ class RealTimeScope:
 
                 cmd = f"F{freq}\n"
                 self.ser.write(cmd.encode())
-                self.lbl_status.config(text=f"Streaming @ {freq}Hz", foreground="green")
+                self.lbl_status.config(text=f"Streaming Sine @ {freq}Hz", foreground="green")
+            except ValueError:
+                messagebox.showerror("Error", "Illegal frequency")
+
+    # --- SAWTOOTH ANLYSIS BUTTON CALLBACK ---
+    def send_sawtooth(self):
+        if self.ser and self.ser.is_open:
+            try:
+                freq = int(self.sawtooth_entry.get())
+
+                # Enable stop button
+                self.btn_stop_sawtooth.config(state=tk.NORMAL)
+
+                # Disable step and sine button to avoid conflict
+                self.btn_step.config(state=tk.DISABLED)  
+                self.btn_sine.config(state=tk.DISABLED)
+
+                self.data_buffer.clear()
+
+                # Compute ADC sample time (useful for data log)
+                self.sample_time = 1/(freq*N_LUT)
+
+                cmd = f"T{freq}\n"
+                self.ser.write(cmd.encode())
+                self.lbl_status.config(text=f"Streaming Sawtooth @ {freq}Hz", foreground="green")
             except ValueError:
                 messagebox.showerror("Error", "Illegal frequency")
     
     # --- STOP BUTTON CALLBACK ---
     def send_stop(self):
         if self.ser and self.ser.is_open:
-            self.current_mode = "IDLE"
             self.data_buffer.clear()
             self.ser.write(b'A\n')
             self.lbl_status.config(text="System stopped", foreground="orange")
 
-            # Enable step button to avoid conflict
+            # Disable stop buttons
+            self.btn_stop_sine.config(state=tk.DISABLED)
+            self.btn_stop_sawtooth.config(state=tk.DISABLED)
+
+            # Enable buttons back
             self.btn_step.config(state=tk.NORMAL)
+            self.btn_sine.config(state=tk.NORMAL)
+            self.btn_sawtooth.config(state=tk.NORMAL)
 
     # --- START RECORD CALLBACK ---
     def start_record(self):
@@ -221,8 +275,9 @@ class RealTimeScope:
                 # Write header
                 self.record_file.write("Time[s],Voltage[V]\n")
 
-                # Reset sample index
-                sample_idx = 0
+                # Reset sample index and time
+                self.sample_idx = 0
+                self.record_time = 0 
 
                 # Set recording flag and handle buttons
                 self.is_recording = True
@@ -272,9 +327,9 @@ class RealTimeScope:
                                     lines = []
                                     for val in values:
                                         volt = val * (3.3/4095.0)
-                                        lines.append(f"{self.time},{volt:.4f}") 
+                                        lines.append(f"{self.record_time},{volt:.4f}") 
                                         self.sample_idx += 1
-                                        self.time += self.sample_time
+                                        self.record_time += self.sample_time
 
                                     # One shot write a whole chunk of data    
                                     self.record_file.write("\n".join(lines) + "\n")
@@ -312,7 +367,6 @@ class RealTimeScope:
                 x = np.arange(len(volt))
                 
                 self.line.set_data(x, volt)
-                self.ax.set_xlim(0, max(len(volt), 100)) 
                 self.canvas.draw()
             except Exception:
                 pass

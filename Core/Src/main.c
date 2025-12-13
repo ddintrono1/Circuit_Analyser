@@ -33,7 +33,7 @@
 typedef enum {
     MODE_IDLE,
     MODE_STEP_LAUNCH,
-    MODE_FREQ_LAUNCH,
+    MODE_WAVE_LAUNCH,
 	MODE_STEP_RUNNING,
 	MODE_FREQ_RUNNING
 } SystemState_t;
@@ -83,7 +83,9 @@ DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
 volatile uint16_t ADC_buffer[TOTAL_BUFFER_SIZE];
-uint16_t DAC_buffer[LUT_SAMPLES];
+uint16_t DAC_Sine[LUT_SAMPLES];
+uint16_t DAC_Saw[LUT_SAMPLES];
+uint16_t* current_waveform_ptr = DAC_Sine;
 
 // System state initialization
 SystemState_t current_state = MODE_IDLE;
@@ -155,9 +157,14 @@ int main(void)
   MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
 
-  // Create sine LookUpTable, this table will contain samples from only one sine period
+  // Create one sine period LookUpTable
   for (int i = 0; i < LUT_SAMPLES; i++){
-	  DAC_buffer[i] = (uint16_t)((4095.0f/2.0f) * (1.0f + sin(2.0f*M_PI*i/LUT_SAMPLES)));
+	  DAC_Sine[i] = (uint16_t)((4095.0f/2.0f) * (1.0f + sin(2.0f*M_PI*i/LUT_SAMPLES)));
+  }
+
+  // Create Sawtooth LookUpTable
+  for(int i = 0; i < LUT_SAMPLES; i++){
+	  DAC_Saw[i] = (uint16_t)(4095.0f/(LUT_SAMPLES-1)*i);
   }
 
   // Trigger connection with the user
@@ -173,7 +180,7 @@ int main(void)
 	  if (current_state == MODE_STEP_LAUNCH)stepResponse();
 
 	  // Start frequency analysis routine
-	  if (current_state == MODE_FREQ_LAUNCH)freqAnalysis();
+	  if (current_state == MODE_WAVE_LAUNCH)waveformResponse();
 
     /* USER CODE END WHILE */
 
@@ -631,8 +638,15 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
 			if (rx_buffer[0] == 'F'){
 				int freq_val = atoi(&rx_buffer[1]);
-				changeSineFreq(freq_val);
-				current_state = MODE_FREQ_LAUNCH;
+				changeFreq(freq_val);
+				current_waveform_ptr = DAC_Sine;
+				current_state = MODE_WAVE_LAUNCH;
+			}
+			if(rx_buffer[0] == 'T'){
+				int freq_val = atoi(&rx_buffer[1]);
+				changeFreq(freq_val);
+				current_waveform_ptr = DAC_Saw;
+				current_state = MODE_WAVE_LAUNCH;
 			}
 
 			if (rx_buffer[0] == 'A'){
@@ -687,7 +701,7 @@ void stepResponse(void)
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);
 }
 
-void freqAnalysis(void)
+void waveformResponse(void)
 {
 	// Update state
 	current_state = MODE_FREQ_RUNNING;
@@ -699,7 +713,7 @@ void freqAnalysis(void)
 	setPinMode(DAC_GPIO_Port, DAC_Pin, GPIO_MODE_ANALOG);
 
 	// Start DMA DAC, still waiting for the timer trigger
-	HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*) DAC_buffer, LUT_SAMPLES, DAC_ALIGN_12B_R);
+	HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*) current_waveform_ptr, LUT_SAMPLES, DAC_ALIGN_12B_R);
 
 	// Start DMA ADC conversion, still waiting for the timer trigger
 	HAL_ADC_Start_DMA(&hadc2, (uint32_t*)ADC_buffer, TOTAL_BUFFER_SIZE);
@@ -721,7 +735,9 @@ void sendData(volatile uint16_t* buffer, uint16_t buffer_length, uint8_t mode)
     HAL_UART_Transmit_DMA(&huart2, (uint8_t*)buffer, buffer_length * 2);
 }
 
-/* Wrapper function used to switch pins configuration mode */
+/*
+ *  Wrapper function used to switch pins configuration mode
+ */
 void setPinMode(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin, uint32_t Mode)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -734,7 +750,10 @@ void setPinMode(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin, uint32_t Mode)
     HAL_GPIO_Init(GPIOx, &GPIO_InitStruct);
 }
 
-void changeSineFreq(uint16_t sine_freq)
+/*
+ * Wrapper function used to change waveforms
+ */
+void changeFreq(uint16_t sine_freq)
 {
 	// Avoid too high, null or negative frequencies
 	if (sine_freq > 2 && sine_freq <= 200){
