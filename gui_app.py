@@ -194,7 +194,14 @@ class RealTimeScope:
     # --- STEP RESPONSE BUTTON CALLBACK --- 
     def send_step(self):
         if self.ser and self.ser.is_open:
+
+            # Clean data buffer and visualization trace
             self.data_buffer.clear()
+            self.line.set_data([], [])
+
+            # Set appropriate window size
+            self.ax.set_xlim(0, CHUNK_SAMPLES) 
+            self.canvas.draw()
 
             self.sample_time = 0.0001
             self.ser.write(b'S\n')
@@ -204,6 +211,15 @@ class RealTimeScope:
     def send_sine(self):
         if self.ser and self.ser.is_open:
             try:
+                # Clean data buffer and visualization trace
+                self.data_buffer.clear()
+                self.line.set_data([], [])
+                
+                # Set appropriate window size
+                self.ax.set_xlim(0, self.max_points) 
+                self.canvas.draw()
+
+                # Read frequency entry
                 freq = int(self.sine_entry.get())
 
                 # Enable stop button
@@ -213,11 +229,10 @@ class RealTimeScope:
                 self.btn_step.config(state=tk.DISABLED)  
                 self.btn_sawtooth.config(state=tk.DISABLED)
 
-                self.data_buffer.clear()
-
                 # Compute ADC sample time (useful for data log)
                 self.sample_time = 1/(freq*N_LUT)
 
+                # Send command to MCU
                 cmd = f"F{freq}\n"
                 self.ser.write(cmd.encode())
                 self.lbl_status.config(text=f"Streaming Sine @ {freq}Hz", foreground="green")
@@ -228,8 +243,17 @@ class RealTimeScope:
     def send_sawtooth(self):
         if self.ser and self.ser.is_open:
             try:
-                freq = int(self.sawtooth_entry.get())
+                # Clean data buffer and visualization trace
+                self.data_buffer.clear()
+                self.line.set_data([], [])
 
+                # Set appropriate window size
+                self.ax.set_xlim(0, self.max_points) 
+                self.canvas.draw()
+                
+                # Read frequency entry
+                freq = int(self.sawtooth_entry.get())
+                
                 # Enable stop button
                 self.btn_stop_sawtooth.config(state=tk.NORMAL)
 
@@ -237,11 +261,10 @@ class RealTimeScope:
                 self.btn_step.config(state=tk.DISABLED)  
                 self.btn_sine.config(state=tk.DISABLED)
 
-                self.data_buffer.clear()
-
                 # Compute ADC sample time (useful for data log)
                 self.sample_time = 1/(freq*N_LUT)
 
+                # Send command to MCU
                 cmd = f"T{freq}\n"
                 self.ser.write(cmd.encode())
                 self.lbl_status.config(text=f"Streaming Sawtooth @ {freq}Hz", foreground="green")
@@ -316,6 +339,7 @@ class RealTimeScope:
                         mode = ord(mode_byte)
                         
                         n_bytes = CHUNK_SAMPLES * 2 
+
                         raw_data = self.ser.read(n_bytes)
                         
                         if len(raw_data) == n_bytes:

@@ -9,12 +9,12 @@ def plot_data():
 
     plt.figure(figsize=(10, 6))
     
-    plt.plot(df['Time[s]'], df['Voltage[V]'], label='Time after time', linewidth=1)
+    plt.plot(df['Time[s]'], df['Voltage[V]'], label='Measured signal', linewidth=1)
 
 
     plt.title(f"Waveform analysis")
     plt.xlabel("Time [s]")
-    plt.ylabel("Waveform [V]")
+    plt.ylabel("Voltage [V]")
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
     plt.legend()
     

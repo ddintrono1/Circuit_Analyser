@@ -2750,7 +2750,9 @@ void sendData(volatile uint16_t* buffer, uint16_t buffer_length, uint8_t mode)
 
 080017fc <setPinMode>:
 
-/* Wrapper function used to switch pins configuration mode */
+/*
+ *  Wrapper function used to switch pins configuration mode
+ */
 void setPinMode(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin, uint32_t Mode)
 {
  80017fc:	b580      	push	{r7, lr}
@@ -2796,6 +2798,9 @@ void setPinMode(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin, uint32_t Mode)
 
 08001840 <changeFreq>:
 
+/*
+ * Wrapper function used to change waveforms
+ */
 void changeFreq(uint16_t sine_freq)
 {
  8001840:	b480      	push	{r7}

@@ -14,6 +14,6 @@
 ../Core/Src/main.c:679:6:stepResponse	1
 ../Core/Src/main.c:704:6:waveformResponse	1
 ../Core/Src/main.c:725:6:sendData	2
-../Core/Src/main.c:739:6:setPinMode	1
-../Core/Src/main.c:751:6:changeFreq	3
-../Core/Src/main.c:769:6:Error_Handler	1
+../Core/Src/main.c:741:6:setPinMode	1
+../Core/Src/main.c:756:6:changeFreq	3
+../Core/Src/main.c:774:6:Error_Handler	1
