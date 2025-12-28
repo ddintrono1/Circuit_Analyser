@@ -147,22 +147,29 @@ class RealTimeScope:
         self.canvas.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
     def refresh_ports(self):
+        # Save for available COM ports
         ports = [port.device for port in serial.tools.list_ports.comports()]
+
+        # Show COM ports in the combobox
         self.port_combo['values'] = ports
+
+        # If some ports are available, automatically show the first in the box
         if ports: self.port_combo.current(0)
 
     def toggle_connection(self):
         if not self.is_running:
             try:
+                # Initialize serial
                 self.ser = serial.Serial(self.port_combo.get(), BAUD_RATE, timeout=0.1)
                 self.ser.reset_input_buffer()
                 self.is_running = True
                 self.stop_thread = False
-                
+
+                # Create and start serial listener thread                
                 self.thread = threading.Thread(target=self.serial_listener, daemon=True)
                 self.thread.start()
 
-                self.btn_connect.config(text="Disconnected")
+                self.btn_connect.config(text="Disconnect")
                 self.lbl_status.config(text="Connected (Listening)", foreground="green")
 
                 # Enable control buttons
@@ -338,8 +345,10 @@ class RealTimeScope:
                         if not mode_byte: continue
                         mode = ord(mode_byte)
                         
+                        # Each sample is a uint16_t (two bytes) and the samples are equal to CHUNK_SAMPLES
                         n_bytes = CHUNK_SAMPLES * 2 
-
+                        
+                        # Read the raw bytes from the UART
                         raw_data = self.ser.read(n_bytes)
                         
                         if len(raw_data) == n_bytes:
@@ -360,6 +369,7 @@ class RealTimeScope:
                                 except Exception as e:
                                     print(f"File error: {e}")
 
+                            # If MODE_STEP we must clear the buffer, since step is one shot and not streaming
                             if mode == MODE_STEP:
                                 self.data_buffer.clear()
                                 self.data_buffer.extend(values)

@@ -1,3 +1,8 @@
+# To do: 
+* The waveforms never stop, except if aborted. Consider stopping when launching the step, separating the gui / microcontroller app
+* Consider using just one ADC, for both step and waveforms, to decrease costs and MCU demand
+
+
 # Development of a Low-Cost STM32-Based Embedded System for Signal Generation and Acquisition
 
 This repository contains all the materials regarding the design, implementation, and testing of the embedded system. Below is a guide to the project structure and files.

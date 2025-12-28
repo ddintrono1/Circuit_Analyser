@@ -637,6 +637,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 			}
 
 			if (rx_buffer[0] == 'F'){
+				// Extract the numerical values from the buffer, stopping at the terminator "\n"
 				int freq_val = atoi(&rx_buffer[1]);
 				changeFreq(freq_val);
 				current_waveform_ptr = DAC_Sine;
